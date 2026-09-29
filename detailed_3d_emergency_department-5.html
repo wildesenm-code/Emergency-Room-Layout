@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Detailed 3D Emergency Department</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#d9dee3;font-family:Arial,sans-serif}
+#ui{position:fixed;z-index:5;top:12px;left:12px;width:310px;background:#fffef8eF;padding:14px;border-radius:12px;box-shadow:0 3px 18px #0003}
+h2{margin:0 0 7px;font-size:19px} p{font-size:12px;line-height:1.4;margin:5px 0}
+button{border:0;border-radius:7px;padding:7px 9px;margin:4px 3px 0 0;background:#e8edf1;cursor:pointer}
+button:hover{background:#d7e0e6}
+#legend{position:fixed;z-index:5;right:12px;top:12px;background:#fffef8eF;padding:12px;border-radius:12px;box-shadow:0 3px 18px #0003;font-size:12px}
+.r{display:flex;gap:7px;align-items:center;margin:4px 0}.sw{width:14px;height:14px;border:1px solid #555}
+#room{position:fixed;z-index:6;display:none;background:#17202a;color:white;padding:10px 12px;border-radius:8px;font-size:12px;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="ui">
+<h2>Emergency Department — Detailed 3D</h2>
+<p><b>Footprint:</b> 80' × 60' &nbsp; <b>Scale:</b> 1 unit = 1 foot</p>
+<p>Drag = rotate • wheel = zoom • right drag = pan • click a room = details</p>
+<button id="top">Top View</button><button id="iso">3D View</button><button id="walls">Hide/Show Walls</button><button id="roof">Hide/Show Roof</button>
+</div>
+<div id="legend">
+<b>Zones</b>
+<div class="r"><i class="sw" style="background:#e57373"></i>Trauma</div>
+<div class="r"><i class="sw" style="background:#ffb74d"></i>Decontamination</div>
+<div class="r"><i class="sw" style="background:#90a4ae"></i>Negative Pressure</div>
+<div class="r"><i class="sw" style="background:#81c784"></i>OR / Surgical</div>
+<div class="r"><i class="sw" style="background:#64b5f6"></i>Radiology</div>
+<div class="r"><i class="sw" style="background:#80cbc4"></i>Exam / Patient</div>
+<div class="r"><i class="sw" style="background:#ba68c8"></i>BHU / Mental Health</div>
+<div class="r"><i class="sw" style="background:#fff59d"></i>Public / Triage</div>
+<div class="r"><i class="sw" style="background:#aed581"></i>Vertical Care</div>
+</div>
+<div id="room"></div>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0xd9dee3);
+const camera=new THREE.PerspectiveCamera(48,innerWidth/innerHeight,.1,500);
+camera.position.set(72,72,78);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.target.set(0,0,0); controls.enableDamping=true; controls.maxPolarAngle=Math.PI*.49;
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x66727d,2.1));
+const sun=new THREE.DirectionalLight(0xffffff,2.6); sun.position.set(-45,90,35); sun.castShadow=true; scene.add(sun);
+
+const C={trauma:0xe57373,decon:0xffb74d,neg:0x90a4ae,or:0x81c784,rad:0x64b5f6,
+exam:0x80cbc4,bhu:0xba68c8,public:0xfff59d,vertical:0xaed581,support:0xbdbdbd,pharm:0xce93d8,nurse:0x90caf9};
+const floor=new THREE.Mesh(new THREE.BoxGeometry(80,.6,60),new THREE.MeshStandardMaterial({color:0xf5f3ed}));
+floor.position.y=-.3; floor.receiveShadow=true; scene.add(floor);
+
+const wallGroup=new THREE.Group(); scene.add(wallGroup);
+const roomGroups=[]; const clickable=[];
+const WALL_H=5, WALL=.32;
+
+function mat(color,rough=.75){return new THREE.MeshStandardMaterial({color,roughness:rough})}
+function box(parent,w,h,d,x,y,z,material,cast=true){
+ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);m.position.set(x,y,z);m.castShadow=cast;m.receiveShadow=true;parent.add(m);return m;
+}
+function label(text,x,z){
+ const c=document.createElement('canvas');c.width=640;c.height=150;const q=c.getContext('2d');
+ q.fillStyle='rgba(255,255,255,.9)';q.fillRect(5,8,630,134);
+ q.fillStyle='#111';q.font='bold 42px Arial';q.textAlign='center';q.textBaseline='middle';
+ const parts=text.split(' ');let lines=[''];for(const w of parts){let t=lines.at(-1)+(lines.at(-1)?' ':'')+w;
+  if(q.measureText(t).width>590){lines.push(w)}else lines[lines.length-1]=t}
+ lines.slice(0,2).forEach((s,i)=>q.fillText(s,320,58+i*43));
+ const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthTest:false}));
+ sp.scale.set(7,1.65,1);sp.position.set(x,WALL_H+.35,z);scene.add(sp);return sp;
+}
+function room(name,x,z,w,d,type,kind='room'){
+ const g=new THREE.Group();g.position.set(x,0,z);scene.add(g);roomGroups.push(g);
+ box(g,w,.18,d,0,.1,0,mat(C[type]||C.support),false);
+ const wm=new THREE.MeshStandardMaterial({color:0xfafafa,transparent:true,opacity:.84});
+ // walls with tiny door gaps represented by separate segments
+ box(wallGroup,w,WALL_H,WALL,x,WALL_H/2,z-d/2,wm);
+ box(wallGroup,w,WALL_H,WALL,x,WALL_H/2,z+d/2,wm);
+ box(wallGroup,WALL,WALL_H,d,x-w/2,WALL_H/2,z,wm);
+ box(wallGroup,WALL,WALL_H,d,x+w/2,WALL_H/2,z,wm);
+ g.userData={name,w,d,type,kind};
+ clickable.push(g);
+ label(name,x,z);
+ return g;
+}
+function bed(g,x,z,rot=0){
+ const b=new THREE.Group();b.position.set(x,.25,z);b.rotation.y=rot;g.add(b);
+ box(b,2.4,.18,6.4,0,.25,0,mat(0xfafafa));box(b,2.4,.55,.3,0,.55,-3.05,mat(0xe6e6e6));
+ box(b,.18,.75,5.8,-1.1,.55,0,mat(0xb0b8be));box(b,.18,.75,5.8,1.1,.55,0,mat(0xb0b8be));
+ box(b,.55,.3,.55,-.75,1.05,-2.25,mat(0x9aa7b0)); box(b,.55,.3,.55,.75,1.05,-2.25,mat(0x9aa7b0));
+ // IV pole
+ box(b,.08,2.6,.08,1.45,1.3,-2.0,mat(0x777)); box(b,.5,.05,.05,1.45,2.55,-2.0,mat(0x777));
+}
+function cabinet(g,x,z,w=1.2,d=.45){
+ box(g,w,1.8,d,x,1,z,mat(0xc8d0d6)); box(g,w+.05,.08,d+.05,x,1.95,z,mat(0x8d979e));
+}
+function desk(g,x,z,w=2.5,d=.8){
+ box(g,w,.75,d,x,.55,z,mat(0xb18c6d)); box(g,.08,1.5,.08,x-w/2+.08,.75,z-d/2+.08,mat(0x555));
+}
+function sink(g,x,z){box(g,1.4,.85,.7,x,.55,z,mat(0xe8ecef));box(g,1.0,.08,.5,x,.99,z,mat(0x9bb4c2));}
+function chair(g,x,z,rot=0){const c=new THREE.Group();c.position.set(x,.45,z);c.rotation.y=rot;g.add(c);box(c,.65,.12,.65,0,0,0,mat(0x56616a));box(c,.55,.55,.08,0,.32,-.28,mat(0x56616a))}
+function monitor(g,x,z){box(g,.65,.55,.08,x,1.3,z,mat(0x20252a));box(g,.08,.45,.08,x,.98,z,mat(0x50565a))}
+
+// TOP/NORTH: ambulance + trauma + imaging + perimeter infection control
+let x=-30;
+for(let i=1;i<=5;i++){let g=room('TRAUMA BAY '+i,x+6,-22.5,12,14,'trauma','trauma');bed(g,0,0);cabinet(g,-4,4);cabinet(g,4,4);monitor(g,3,-2);x+=12}
+let rad=room('RADIOLOGY / X-RAY',2,-22.5,12,14,'rad');box(rad,3,.3,2,-2,.5,0,mat(0x9aa7b0));cabinet(rad,4,3);
+let ct=room('CT',14,-22.5,10,14,'rad');box(ct,3,1.5,5,0,1,0,mat(0xe7e7e7));box(ct,1,.5,4,0,1.8,0,mat(0xb7bec4));
+let de1=room('DECONTAMINATION 1',25,-22.5,10,14,'decon');sink(de1,-2,2);sink(de1,2,2);box(de1,3,.12,3,0,.4,-1,mat(0x9eb8c2));
+let np1=room('NEGATIVE PRESSURE 1',35,-22.5,8,14,'neg');bed(np1,0,0);sink(np1,2,3);
+label('AMBULANCE ENTRANCE',-39,-22.5); label('OUTSIDE DECON ENTRANCE',39,-22.5);
+
+// ORs
+let or1=room('OR 1',-30,18,18,14,'or');box(or1,2,.45,4,0,1.2,0,mat(0xf7f7f7));box(or1,.18,1.4,.18,-2,1.9,0,mat(0x888));
+let or2=room('OR 2',-10,18,18,14,'or');box(or2,2,.45,4,0,1.2,0,mat(0xf7f7f7));box(or2,.18,1.4,.18,2,1.9,0,mat(0x888));
+let an=room('ANESTHESIA / OR SUPPORT',2,18,5,14,'or');cabinet(an,0,0,2,.6);
+
+// BHU
+for(let i=0;i<4;i++){let gx=-31+(i%2)*10,gz=-6+Math.floor(i/2)*10;let g=room('BHU ROOM '+(i+1),gx,gz,9,9,'bhu','bhu');bed(g,0,0);sink(g,2.8,2.8)}
+let lounge=room('BHU LOUNGE / QUIET',-26,13,19,6,'bhu');for(let i=-2;i<=2;i+=2)chair(lounge,i,0);desk(lounge,5,1.5,3,.7);
+
+// center
+let ns=room('CENTRAL NURSES STATION',-5,0,18,13,'nurse','nurse');desk(ns,0,0,9,1.1);for(let i=-6;i<=6;i+=3){chair(ns,i,2.8);monitor(ns,i,0)}
+let med=room('MED STORAGE',-17,-9,7,6,'exam');for(let i=-2;i<=2;i+=2)cabinet(med,i,0,.9,.5);
+let sup=room('SUPPLY',-9,-9,7,6,'exam');for(let i=-2;i<=2;i+=2)cabinet(sup,i,0,.9,.5);
+
+// exam rooms
+for(let i=0;i<6;i++){let z=-12+i*5;let g=room('EXAM ROOM '+(i+1),13,z,12,4.5,'exam');bed(g,0,0,Math.PI/2);sink(g,4,1)}
+// vertical care
+for(let i=0;i<4;i++){let z=10-i*5;let g=room('VERTICAL CARE '+(i+1),2,z,9,4.2,'vertical');bed(g,0,0,Math.PI/2)}
+
+// right support
+let np2=room('NEGATIVE PRESSURE 2',35,-9,8,10,'neg');bed(np2,0,0);sink(np2,2,2);
+let de2=room('DECONTAMINATION 2',35,2,8,10,'decon');sink(de2,-2,2);sink(de2,2,2);
+let pharm=room('PHARMACY',35,12,8,9,'pharm');for(let i=-2;i<=2;i+=2)cabinet(pharm,i,0,.9,.5);
+let lab=room('LAB',28,12,6,9,'support');desk(lab,0,1.5,3,.7);cabinet(lab,1,-1);
+let resp=room('RESP / EKG',28,2,6,7,'support');bed(resp,0,0);monitor(resp,2,1);
+
+// public
+let wait=room('WAITING AREA',-27,26,26,7,'public');for(let xx=-9;xx<=9;xx+=3)for(let zz=-2;zz<=2;zz+=2)chair(wait,xx,zz);
+let reg=room('CHECK-OUT / REGISTRATION',-8,26,10,7,'public');desk(reg,0,1.5,7,.8);for(let xx=-3;xx<=3;xx+=2)chair(reg,xx,-1);
+let tri=room('TRIAGE',2,26,9,7,'public');for(let xx=-2;xx<=2;xx+=2)bed(tri,xx,0); 
+let fam=room('FAMILY ROOM',12,26,7,7,'public');for(let xx=-1;xx<=1;xx+=2)chair(fam,xx,0);
+let rest=room('PATIENT RESTROOMS',20,26,7,7,'support');for(let xx=-2;xx<=2;xx+=2)box(rest,1,.7,1,xx,.5,0,mat(0xd0d4d6));
+let staff=room('STAFF LOUNGE',29,26,9,7,'support');for(let xx=-2;xx<=2;xx+=2)chair(staff,xx,0);
+
+// OR and support labels/entrances
+label('MAIN PATIENT ENTRANCE',2,30.5);
+label('OUTSIDE DECON ENTRANCE',39,7);
+label('STAFF / SERVICE',30,30.5);
+
+// corridors
+function corridor(x,z,w,d){box(scene,w,.12,d,x,.02,z,mat(0xffffff),false)}
+corridor(0,-15,76,3.5);corridor(0,8,76,3.5);corridor(8,0,3.5,26);
+
+// exterior drive/ambulance bay
+box(scene,12,.15,9,-38,.05,-22.5,mat(0x737b82),false);
+box(scene,12,.2,.6,-38,.12,-18.5,mat(0xf1f1f1),false);
+
+// room click raycast
+const ray=new THREE.Raycaster(),mouse=new THREE.Vector2(),info=document.getElementById('room');
+renderer.domElement.addEventListener('pointerdown',e=>{
+ mouse.x=e.clientX/innerWidth*2-1;mouse.y=-(e.clientY/innerHeight)*2+1;ray.setFromCamera(mouse,camera);
+ let hits=ray.intersectObjects(clickable,true);
+ if(hits.length){let g=hits[0].object;while(g.parent&&!g.userData.name)g=g.parent;
+  if(g.userData.name){info.style.display='block';info.style.left=(e.clientX+12)+'px';info.style.top=(e.clientY+12)+'px';
+   info.innerHTML='<b>'+g.userData.name+'</b><br>Approx. '+g.userData.w+' ft × '+g.userData.d+' ft<br>Drawn at ¼″ = 1′: '+(g.userData.w*.25).toFixed(2)+'″ × '+(g.userData.d*.25).toFixed(2)+'″';}
+ }
+});
+renderer.domElement.addEventListener('pointermove',e=>{if(e.buttons===0)info.style.display='none'});
+
+let roofVisible=true,wallsVisible=true;
+document.getElementById('walls').onclick=()=>{wallsVisible=!wallsVisible;wallGroup.visible=wallsVisible};
+document.getElementById('roof').onclick=()=>{roofVisible=!roofVisible;roof.visible=roofVisible};
+
+const roof=new THREE.Mesh(new THREE.BoxGeometry(80,.45,60),new THREE.MeshStandardMaterial({color:0x8b9299,transparent:true,opacity:.55}));
+roof.position.y=8;scene.add(roof);
+document.getElementById('top').onclick=()=>{camera.position.set(0,100,.01);controls.target.set(0,0,0)};
+document.getElementById('iso').onclick=()=>{camera.position.set(72,72,78);controls.target.set(0,0,0)};
+
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+(function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera)})();
+</script>
+</body>
+</html>
